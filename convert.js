@@ -21,12 +21,70 @@ const rehype2remark = require("rehype-remark");
 const stringify = require("remark-stringify");
 const imageType = require("image-type");
 
-// includes all sorts of edge cases and weird stuff
-processExport("test-wordpress-dump.xml");
-// full dump
-// processExport("ageekwithahat.wordpress.2020-08-22 (1).xml");
+// Get the filename and output directory from command line arguments
+const filename = process.argv[2];
+const outputDir = process.argv[3] || 'out';
 
-function processExport(file) {
+if (!filename) {
+    console.error("Please provide a WordPress XML file as an argument");
+    console.error("Usage: yarn convert <wordpress-export-file.xml> [output-directory]");
+    console.error("Example: yarn convert export.xml my-blog-posts");
+    process.exit(1);
+}
+
+// Set up logging to both console and file
+const logFile = path.join(outputDir + '-log.txt');
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+
+// Create a write stream for the log file
+const logStream = fs.createWriteStream(logFile, { flags: 'w' });
+
+// Override console.log and console.error to write to both console and file
+console.log = function() {
+    const args = Array.from(arguments);
+    const timestamp = new Date().toISOString();
+    const message = `${timestamp} ${args.join(' ')}\n`;
+    logStream.write(message);
+    originalConsoleLog.apply(console, args);
+};
+
+console.error = function() {
+    const args = Array.from(arguments);
+    const timestamp = new Date().toISOString();
+    const message = `${timestamp} ERROR: ${args.join(' ')}\n`;
+    logStream.write(message);
+    originalConsoleError.apply(console, args);
+};
+
+// Clean the output directory if it exists
+if (fs.existsSync(outputDir)) {
+    console.log(`Cleaning ${outputDir} directory...`);
+    fs.rmSync(outputDir, { recursive: true, force: true });
+}
+
+// Process the export file
+processExport(filename, outputDir);
+
+// Add error handling for the main process
+process.on('exit', (code) => {
+    console.log(`Process exiting with code: ${code}`);
+    logStream.end();
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err);
+    logStream.end();
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    logStream.end();
+    process.exit(1);
+});
+
+function processExport(file, outputDir) {
     const parser = new xml2js.Parser();
 
     fs.readFile(file, function (err, data) {
@@ -42,11 +100,14 @@ function processExport(file) {
 
             const posts = result.rss.channel[0].item;
 
-            fs.mkdir("out", function () {
-                posts
-                    .filter((p) => p["wp:post_type"][0] === "post")
-                    .forEach(processPost);
-            });
+            // Create output directory if it doesn't exist
+            if (!fs.existsSync(outputDir)) {
+                fs.mkdirSync(outputDir, { recursive: true });
+            }
+
+            posts
+                .filter((p) => p["wp:post_type"][0] === "post")
+                .forEach(post => processPost(post, outputDir));
         });
     });
 }
@@ -63,75 +124,101 @@ function constructImageName({ urlParts, buffer }) {
     return `${pathParts.name}.${ext}`;
 }
 
+async function downloadFile(url) {
+    try {
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response;
+    } catch (e) {
+        console.log(`Failed to download: ${url}`, e.message);
+        throw e;
+    }
+}
+
 async function processImage({ url, postData, images, directory }) {
-    const cleanUrl = htmlentities.decode(url);
-
-    if (cleanUrl.startsWith("./img")) {
-        console.log(`Already processed ${cleanUrl} in ${directory}`);
-
+    if (!url || typeof url !== 'string') {
+        console.log("Skipping invalid image URL:", url);
         return [postData, images];
     }
 
-    const urlParts = new URL(cleanUrl);
-
-    const filePath = `out/${directory}/img`;
-
     try {
+        const cleanUrl = htmlentities.decode(url).trim();
+        console.log("Downloading image:", cleanUrl);
+        
         const response = await downloadFile(cleanUrl);
-        const type = response.headers.get("Content-Type");
-
-        if (type.includes("image") || type.includes("octet-stream")) {
-            const buffer = await response.arrayBuffer();
-            const imageName = constructImageName({
-                urlParts,
-                buffer,
-            });
-
-            //Make the image name local relative in the markdown
-            postData = postData.replace(url, `./img/${imageName}`);
-            images = [...images, `./img/${imageName}`];
-
-            fs.writeFileSync(`${filePath}/${imageName}`, new Buffer(buffer));
+        const buffer = await response.buffer();
+        
+        // Extract filename from URL
+        const urlObj = new URL(cleanUrl);
+        const pathParts = path.parse(urlObj.pathname);
+        const imageName = pathParts.base;
+        
+        const imageDir = path.join(directory);
+        if (!fs.existsSync(imageDir)) {
+            fs.mkdirSync(imageDir, { recursive: true });
         }
-    } catch (e) {
-        console.log(`Keeping ref to ${url}`);
-    }
 
-    return [postData, images];
+        const imagePath = path.join(imageDir, imageName);
+        fs.writeFileSync(imagePath, buffer);
+        console.log("Saved image:", imagePath);
+
+        // Create a copy of postData to modify
+        let updatedPostData = postData;
+        if (updatedPostData && typeof updatedPostData === 'string') {
+            // Escape special characters in URL for regex
+            const escapedUrl = cleanUrl.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(escapedUrl, 'g');
+            updatedPostData = updatedPostData.replace(regex, `./${imageName}`);
+        }
+
+        images.push(imageName);
+        return [updatedPostData, images];
+    } catch (e) {
+        console.log("Failed to process image:", url, "Error:", e.message);
+        return [postData, images];
+    }
 }
 
 async function processImages({ postData, directory }) {
-    const patt = new RegExp('(?:src="(.*?)")', "gi");
+    if (!postData) return [postData, []];
+
+    let updatedPostData = postData;
     let images = [];
+    
+    // Match both single and double quoted src attributes
+    const imgRegex = /<img[^>]+src=["']([^"']+)["']/g;
+    const matches = [...updatedPostData.matchAll(imgRegex)];
 
-    var m;
-    let matches = [];
+    for (const match of matches) {
+        try {
+            const url = match[1].trim();
+            if (!url) continue;
 
-    while ((m = patt.exec(postData)) !== null) {
-        if (!m[1].endsWith(".js")) {
-            matches.push(m[1]);
+            console.log("Processing image URL:", url);
+            const [newPostData, newImages] = await processImage({
+                url,
+                postData: updatedPostData,
+                images,
+                directory,
+            });
+            
+            updatedPostData = newPostData;
+            images = [...new Set([...images, ...newImages])]; // Remove duplicates
+        } catch (e) {
+            console.log("Error processing image match:", e.message);
         }
     }
 
-    if (matches != null && matches.length > 0) {
-        for (let match of matches) {
-            try {
-                [postData, images] = await processImage({
-                    url: match,
-                    postData,
-                    images,
-                    directory,
-                });
-            } catch (err) {
-                console.log("ERROR PROCESSING IMAGE", match);
-            }
-        }
-    }
-
-    return [postData, images];
+    return [updatedPostData, images];
 }
 
-async function processPost(post) {
+async function processPost(post, outputDir) {
     console.log("Processing Post");
 
     const postTitle =
@@ -150,43 +237,36 @@ async function processPost(post) {
         .replace(/\*/g, "");
     console.log("Post slug: " + slug);
 
+    const mediaDirectory = `${outputDir}/${slug}`;
+    // Create media directory for images and other assets
+    if (!fs.existsSync(mediaDirectory)) {
+        fs.mkdirSync(mediaDirectory, { recursive: true });
+    }
+
     // takes the longest description candidate
+    const postMeta = post["wp:postmeta"] || [];
     const description = [
         post.description,
-        ...post["wp:postmeta"].filter(
+        ...postMeta.filter(
             (meta) =>
-                meta["wp:meta_key"][0].includes("metadesc") ||
-                meta["wp:meta_key"][0].includes("description")
+                meta["wp:meta_key"] && 
+                (meta["wp:meta_key"][0].includes("metadesc") ||
+                meta["wp:meta_key"][0].includes("description"))
         ),
-    ].sort((a, b) => b.length - a.length)[0];
+    ].filter(Boolean).sort((a, b) => b.length - a.length)[0];
 
-    const heroURLs = post["wp:postmeta"]
+    const heroURLs = (post["wp:postmeta"] || [])
         .filter(
             (meta) =>
-                meta["wp:meta_key"][0].includes("opengraph-image") ||
-                meta["wp:meta_key"][0].includes("twitter-image")
+                meta["wp:meta_key"] && 
+                (meta["wp:meta_key"][0].includes("opengraph-image") ||
+                meta["wp:meta_key"][0].includes("twitter-image"))
         )
         .map((meta) => meta["wp:meta_value"][0])
         .filter((url) => url.startsWith("http"));
 
     let heroImage = "";
 
-    let directory = slug;
-    let fname = `index.mdx`;
-
-    try {
-        fs.mkdirSync(`out/${directory}`);
-        fs.mkdirSync(`out/${directory}/img`);
-    } catch (e) {
-        directory = directory + "-2";
-        fs.mkdirSync(`out/${directory}`);
-        fs.mkdirSync(`out/${directory}/img`);
-    }
-
-    //Merge categories and tags into tags
-    const categories = post.category && post.category.map((cat) => cat["_"]);
-
-    //Find all images
     let images = [];
     if (heroURLs.length > 0) {
         const url = heroURLs[0];
@@ -194,11 +274,11 @@ async function processPost(post) {
             url,
             postData,
             images,
-            directory,
+            directory: mediaDirectory,
         });
     }
 
-    [postData, images] = await processImages({ postData, directory });
+    [postData, images] = await processImages({ postData, directory: mediaDirectory });
 
     heroImage = images.find((img) => !img.endsWith("gif"));
 
@@ -257,6 +337,7 @@ async function processPost(post) {
         throw e;
     }
 
+    const categories = post.category && post.category.map((cat) => cat["_"]);
     if (categories && categories.length > 0) {
         frontmatter.push(`categories: "${categories.join(", ")}"`);
     }
@@ -266,20 +347,16 @@ async function processPost(post) {
     frontmatter.push("");
 
     fs.writeFile(
-        `out/${directory}/${fname}`,
+        `${outputDir}/${slug}.mdx`,
         frontmatter.join("\n") + markdown,
-        function (err) {}
+        function (err) {
+            if (err) {
+                console.error("Error writing file:", err);
+            }
+        }
     );
 }
 
-async function downloadFile(url) {
-    const response = await fetch(url);
-    if (response.status >= 400) {
-        throw new Error("Bad response from server");
-    } else {
-        return response;
-    }
-}
 function getPaddedMonthNumber(month) {
     if (month < 10) return "0" + month;
     else return month;

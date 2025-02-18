@@ -28,6 +28,7 @@ Export your Wordpress to XML then:
     # change filename on convert.js line 27
 
     $ yarn
+    $ yarn install
     $ yarn convert
 
     # sip margaritas
