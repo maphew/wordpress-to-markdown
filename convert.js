@@ -2,7 +2,7 @@ const { format } = require("date-fns");
 const fetch = require("node-fetch");
 const path = require("path");
 const prettier = require("prettier");
-
+const https = require('https');
 const xml2js = require("xml2js");
 const fs = require("fs");
 const slugify = require("slugify");
@@ -126,10 +126,16 @@ function constructImageName({ urlParts, buffer }) {
 
 async function downloadFile(url) {
     try {
+        const agent = new https.Agent({
+            rejectUnauthorized: false,  // Allow self-signed certificates
+            NODE_TLS_REJECT_UNAUTHORIZED: '0'  // Alternative way to allow self-signed certs
+        });
+        
         const response = await fetch(url, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
+            },
+            agent
         });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
