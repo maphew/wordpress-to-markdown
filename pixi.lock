@@ -1,0 +1,29 @@
+version: 6
+environments:
+  default:
+    channels:
+    - url: https://conda.anaconda.org/conda-forge/
+    packages:
+      win-64:
+      - conda: https://conda.anaconda.org/conda-forge/win-64/nodejs-22.13.0-hfeaa22a_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/yarn-4.6.0-h5737063_0.conda
+packages:
+- conda: https://conda.anaconda.org/conda-forge/win-64/nodejs-22.13.0-hfeaa22a_0.conda
+  sha256: 2e72f510715960a0579a2a5452104d20044e8ba74742b87899e24c11cb72d578
+  md5: bd7dde69cfd032aec6ba645297315aff
+  arch: x86_64
+  platform: win
+  license: MIT
+  license_family: MIT
+  size: 26232097
+  timestamp: 1737384238153
+- conda: https://conda.anaconda.org/conda-forge/noarch/yarn-4.6.0-h5737063_0.conda
+  sha256: 2e7a74dcb920fcf743f5b12153be96af57ae4ad41272bb4d3459ab5f78f4b60b
+  md5: 565cca40505b7dd12b31327d51a0f2cc
+  depends:
+  - __win
+  - nodejs >=18.12.0
+  license: BSD-2-Clause
+  license_family: BSD
+  size: 898341
+  timestamp: 1735489614490

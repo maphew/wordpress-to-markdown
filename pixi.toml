@@ -1,0 +1,12 @@
+[project]
+authors = ["matt wilkie <maphew@gmail.com>"]
+channels = ["conda-forge"]
+description = "Add a short description here"
+name = "wordpress-to-markdown"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+yarn = ">=4.6.0,<5"
