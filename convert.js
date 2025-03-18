@@ -24,21 +24,46 @@ const imageType = require("image-type");
 // Get the filename and output directory from command line arguments
 const filename = process.argv[2];
 const outputDir = process.argv[3] || 'out';
+const limitFlag = process.argv[4];
+let limit = 0;
+
+if (limitFlag && limitFlag.startsWith('--limit=')) {
+    limit = parseInt(limitFlag.split('=')[1], 10);
+    if (isNaN(limit) || limit <= 0) {
+        limit = 0;
+        console.log("Invalid limit value. Processing all posts.");
+    } else {
+        console.log(`Limiting processing to ${limit} posts distributed across the dataset.`);
+    }
+}
 
 if (!filename) {
     console.error("Please provide a WordPress XML file as an argument");
-    console.error("Usage: yarn convert <wordpress-export-file.xml> [output-directory]");
-    console.error("Example: yarn convert export.xml my-blog-posts");
+    console.error("Usage: yarn convert <wordpress-export-file.xml> [output-directory] [--limit=N]");
+    console.error("Example: yarn convert export.xml my-blog-posts --limit=10");
     process.exit(1);
 }
 
+// Make sure output directory exists
+if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+}
+
 // Set up logging to both console and file
-const logFile = path.join(outputDir + '-log.txt');
+const logFile = path.join(outputDir, 'conversion-log.txt');
 const originalConsoleLog = console.log;
 const originalConsoleError = console.error;
 
 // Create a write stream for the log file
 const logStream = fs.createWriteStream(logFile, { flags: 'w' });
+
+// Log the command line used
+const commandLine = `Command: node ${process.argv.join(' ')}`;
+const startTime = new Date().toISOString();
+logStream.write(`${startTime} ${commandLine}\n`);
+logStream.write(`${startTime} Running from directory: ${process.cwd()}\n`);
+logStream.write(`${startTime} Node.js version: ${process.version}\n`);
+logStream.write(`${startTime} ----------------------------------------\n`);
 
 // Override console.log and console.error to write to both console and file
 console.log = function() {
@@ -57,10 +82,26 @@ console.error = function() {
     originalConsoleError.apply(console, args);
 };
 
-// Clean the output directory if it exists
+// Clean the output directory if it exists (but preserve the log file)
 if (fs.existsSync(outputDir)) {
     console.log(`Cleaning ${outputDir} directory...`);
-    fs.rmSync(outputDir, { recursive: true, force: true });
+    
+    // Read directory contents
+    const dirContents = fs.readdirSync(outputDir);
+    
+    // Remove everything except the log file
+    dirContents.forEach(item => {
+        if (item !== path.basename(logFile)) {
+            const itemPath = path.join(outputDir, item);
+            if (fs.lstatSync(itemPath).isDirectory()) {
+                fs.rmSync(itemPath, { recursive: true, force: true });
+            } else {
+                fs.unlinkSync(itemPath);
+            }
+        }
+    });
+} else {
+    fs.mkdirSync(outputDir, { recursive: true });
 }
 
 // Process the export file
@@ -98,16 +139,62 @@ function processExport(file, outputDir) {
             }
             console.log("Parsed XML");
 
-            const posts = result.rss.channel[0].item;
+            const allPosts = result.rss.channel[0].item.filter(
+                (p) => p["wp:post_type"][0] === "post"
+            );
+            
+            let postsToProcess = allPosts;
+            
+            // Apply limit if specified
+            if (limit > 0 && limit < allPosts.length) {
+                console.log(`Total posts: ${allPosts.length}, processing ${limit} distributed samples`);
+                
+                // Group posts by first letter of title for distributed sampling
+                const postsByFirstLetter = {};
+                allPosts.forEach(post => {
+                    const title = typeof post.title === "string" ? post.title : post.title[0];
+                    const firstLetter = title.trim().charAt(0).toLowerCase();
+                    if (!postsByFirstLetter[firstLetter]) {
+                        postsByFirstLetter[firstLetter] = [];
+                    }
+                    postsByFirstLetter[firstLetter].push(post);
+                });
+                
+                // Get the most common first letters
+                const letterGroups = Object.keys(postsByFirstLetter).sort((a, b) => 
+                    postsByFirstLetter[b].length - postsByFirstLetter[a].length
+                );
+                
+                // Distribute the samples across letter groups
+                postsToProcess = [];
+                let remainingLimit = limit;
+                let letterIndex = 0;
+                
+                // First pass: take one from each letter group until we've reached the limit
+                while (remainingLimit > 0 && letterIndex < letterGroups.length) {
+                    const letter = letterGroups[letterIndex];
+                    if (postsByFirstLetter[letter].length > 0) {
+                        postsToProcess.push(postsByFirstLetter[letter].shift());
+                        remainingLimit--;
+                    }
+                    letterIndex = (letterIndex + 1) % letterGroups.length;
+                    
+                    // If we've gone through all letter groups, break if no more posts
+                    if (letterIndex === 0) {
+                        const anyPostsLeft = letterGroups.some(l => postsByFirstLetter[l].length > 0);
+                        if (!anyPostsLeft) break;
+                    }
+                }
+                
+                console.log(`Processing ${postsToProcess.length} posts from ${letterGroups.length} different letter groups`);
+            }
 
             // Create output directory if it doesn't exist
             if (!fs.existsSync(outputDir)) {
                 fs.mkdirSync(outputDir, { recursive: true });
             }
 
-            posts
-                .filter((p) => p["wp:post_type"][0] === "post")
-                .forEach(post => processPost(post, outputDir));
+            postsToProcess.forEach(post => processPost(post, outputDir));
         });
     });
 }
@@ -166,7 +253,9 @@ async function processImage({ url, postData, images, directory }) {
         const imageName = pathParts.base;
         
         const imageDir = path.join(directory);
+        // Create directory only when we have an actual image to save
         if (!fs.existsSync(imageDir)) {
+            console.log(`Creating image directory: ${imageDir}`);
             fs.mkdirSync(imageDir, { recursive: true });
         }
 
@@ -244,11 +333,8 @@ async function processPost(post, outputDir) {
     console.log("Post slug: " + slug);
 
     const mediaDirectory = `${outputDir}/${slug}`;
-    // Create media directory for images and other assets
-    if (!fs.existsSync(mediaDirectory)) {
-        fs.mkdirSync(mediaDirectory, { recursive: true });
-    }
-
+    // Don't create media directory yet - only create it when we actually have images
+    
     // takes the longest description candidate
     const postMeta = post["wp:postmeta"] || [];
     const description = [

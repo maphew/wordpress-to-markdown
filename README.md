@@ -17,22 +17,31 @@ It seems to have worked for someone else too ✌️
 
 ## Usage
 
-This program will put the output into `/out` folder, and also all images will go to `/img`. Image urls are rewritten to `./img`, which is what most markdown static site generators enjoy.
+```bash
+# Clone the repository
+$ git clone https://github.com/Swizec/wordpress-to-markdown
 
-Export your Wordpress to XML then:
+# download your wordpress xml
 
+$ yarn
+$ yarn install
+
+# Basic usage
+$ yarn convert <wordpress-export-file.xml> [output-directory] [--limit=N]
+
+# Examples:
+$ yarn convert ~/Downloads/mysite.Wordpress.2025-02-18.xml     # Output to 'out' directory
+$ yarn convert export.xml my-blog-posts                        # Custom output directory
+$ yarn convert export.xml my-blog-posts --limit=10             # Process only 10 posts (for testing)
 ```
-    $ git clone https://github.com/Swizec/wordpress-to-markdown
 
-    # download your wordpress xml
-    # change filename on convert.js line 27
+### Features
 
-    $ yarn
-    $ yarn install
-    $ yarn convert
-
-    # sip margaritas
-```
+- Converts WordPress XML to Markdown files
+- Downloads and processes images
+- Creates image directories only when needed
+- Automatic logging to `conversion-log.txt` in the output directory
+- Limit flag (`--limit=N`) for testing with a distributed sample of posts
 
 ## Technical Details
 
@@ -189,4 +198,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
