@@ -27,13 +27,18 @@ $ yarn
 $ yarn install
 
 # Basic usage
-$ yarn convert <wordpress-export-file.xml> [output-directory] [--limit=N]
+$ yarn convert <wordpress-export-file.xml> [output-directory] [--limit=N] [--overwrite]
 
 # Examples:
 $ yarn convert ~/Downloads/mysite.Wordpress.2025-02-18.xml     # Output to 'out' directory
 $ yarn convert export.xml my-blog-posts                        # Custom output directory
 $ yarn convert export.xml my-blog-posts --limit=10             # Process only 10 posts (for testing)
+$ yarn convert export.xml my-blog-posts --overwrite            # Overwrite output directory if it exists
 ```
+
+> **Warning:**
+> The script will NOT delete or overwrite any existing files in the output directory unless you provide the `--overwrite` flag. If the output directory exists and you do not specify `--overwrite`, the script will exit with an error and no files will be deleted. This prevents accidental data loss.
+
 
 ### Features
 

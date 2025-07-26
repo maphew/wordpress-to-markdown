@@ -22,9 +22,23 @@ const stringify = require("remark-stringify");
 const imageType = require("image-type");
 
 // Get the filename and output directory from command line arguments
-const filename = process.argv[2];
-const outputDir = process.argv[3] || 'out';
-const limitFlag = process.argv[4];
+let overwrite = false;
+let limitFlag;
+let filename;
+let outputDir;
+// Support flexible argument order for --limit and --overwrite
+for (let i = 2; i < process.argv.length; i++) {
+    if (process.argv[i] === '--overwrite') {
+        overwrite = true;
+    } else if (process.argv[i] && process.argv[i].startsWith('--limit=')) {
+        limitFlag = process.argv[i];
+    } else if (!filename) {
+        filename = process.argv[i];
+    } else if (!outputDir && !process.argv[i].startsWith('--')) {
+        outputDir = process.argv[i];
+    }
+}
+outputDir = outputDir || 'out';
 let limit = 0;
 
 if (limitFlag && limitFlag.startsWith('--limit=')) {
@@ -39,14 +53,19 @@ if (limitFlag && limitFlag.startsWith('--limit=')) {
 
 if (!filename) {
     console.error("Please provide a WordPress XML file as an argument");
-    console.error("Usage: yarn convert <wordpress-export-file.xml> [output-directory] [--limit=N]");
-    console.error("Example: yarn convert export.xml my-blog-posts --limit=10");
+    console.error("Usage: yarn convert <wordpress-export-file.xml> [output-directory] [--limit=N] [--overwrite]");
+    console.error("Example: yarn convert export.xml my-blog-posts --limit=10 --overwrite");
     process.exit(1);
 }
 
-// Make sure output directory exists
+// Output directory handling
 if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
+} else {
+    if (!overwrite) {
+        console.error(`Output directory '${outputDir}' already exists. To overwrite, rerun with the --overwrite flag. No files were deleted.`);
+        process.exit(1);
+    }
 }
 
 // Set up logging to both console and file
@@ -61,6 +80,8 @@ const logStream = fs.createWriteStream(logFile, { flags: 'w' });
 const commandLine = `Command: node ${process.argv.join(' ')}`;
 const startTime = new Date().toISOString();
 logStream.write(`${startTime} ${commandLine}\n`);
+logStream.write('INPUT: ' + path.resolve(filename) + '\n');
+logStream.write('OUTPUT: ' + path.resolve(outputDir) + '\n');
 logStream.write(`${startTime} Running from directory: ${process.cwd()}\n`);
 logStream.write(`${startTime} Node.js version: ${process.version}\n`);
 logStream.write(`${startTime} ----------------------------------------\n`);
@@ -126,6 +147,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 function processExport(file, outputDir) {
+    console.log(`[IN] processExport: file=${JSON.stringify(file)}, outputDir=${JSON.stringify(outputDir)}, limit=${typeof limit !== 'undefined' ? limit : 'undefined'}`);
     const parser = new xml2js.Parser();
 
     fs.readFile(file, function (err, data) {
@@ -194,7 +216,11 @@ function processExport(file, outputDir) {
                 fs.mkdirSync(outputDir, { recursive: true });
             }
 
-            postsToProcess.forEach(post => processPost(post, outputDir));
+            let results = [];
+postsToProcess.forEach(post => {
+    results.push(processPost(post, outputDir));
+});
+console.log(`[OUT] processExport: processed ${results.length} posts.`);
         });
     });
 }
@@ -212,6 +238,7 @@ function constructImageName({ urlParts, buffer }) {
 }
 
 async function downloadFile(url) {
+    // FIX: self-signing should only be allowed with a flag
     try {
         const agent = new https.Agent({
             rejectUnauthorized: false,  // Allow self-signed certificates
@@ -235,6 +262,7 @@ async function downloadFile(url) {
 }
 
 async function processImage({ url, postData, images, directory }) {
+    console.log(`[IN] processImage: url=${JSON.stringify(url)}, directory=${JSON.stringify(directory)}, imagesCount=${images ? images.length : 0}`);
     if (!url || typeof url !== 'string') {
         console.log("Skipping invalid image URL:", url);
         return [postData, images];
@@ -273,7 +301,8 @@ async function processImage({ url, postData, images, directory }) {
         }
 
         images.push(imageName);
-        return [updatedPostData, images];
+console.log(`[OUT] processImage: saved=${imageName}, imagesCount=${images.length}`);
+return [updatedPostData, images];
     } catch (e) {
         console.log("Failed to process image:", url, "Error:", e.message);
         return [postData, images];
@@ -281,6 +310,7 @@ async function processImage({ url, postData, images, directory }) {
 }
 
 async function processImages({ postData, directory }) {
+    console.log(`[IN] processImages: directory=${JSON.stringify(directory)}, postDataLength=${postData ? postData.length : 0}`);
     if (!postData) return [postData, []];
 
     let updatedPostData = postData;
@@ -314,6 +344,7 @@ async function processImages({ postData, directory }) {
 }
 
 async function processPost(post, outputDir) {
+    console.log(`[IN] processPost: postTitle=${JSON.stringify(post && (typeof post.title === 'string' ? post.title : post.title && post.title[0]))}, outputDir=${JSON.stringify(outputDir)}`);
     console.log("Processing Post");
 
     const postTitle =
@@ -444,6 +475,8 @@ async function processPost(post, outputDir) {
         function (err) {
             if (err) {
                 console.error("Error writing file:", err);
+            } else {
+                console.log(`[OUT] processPost: slug=${slug}, file=${outputDir}/${slug}.mdx, images=${JSON.stringify(images)}, heroImage=${JSON.stringify(heroImage)}`);
             }
         }
     );
