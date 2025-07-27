@@ -36,9 +36,6 @@ $ yarn convert export.xml my-blog-posts --limit=10             # Process only 10
 $ yarn convert export.xml my-blog-posts --overwrite            # Overwrite output directory if it exists
 ```
 
-> **Warning:**
-> The script will NOT delete or overwrite any existing files in the output directory unless you provide the `--overwrite` flag. If the output directory exists and you do not specify `--overwrite`, the script will exit with an error and no files will be deleted. This prevents accidental data loss.
-
 
 ### Features
 

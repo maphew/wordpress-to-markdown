@@ -297,7 +297,9 @@ async function processImage({ url, postData, images, directory }) {
             // Escape special characters in URL for regex
             const escapedUrl = cleanUrl.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
             const regex = new RegExp(escapedUrl, 'g');
-            updatedPostData = updatedPostData.replace(regex, `./${imageName}`);
+            // Reference image relative to the .mdx file, in the subdir named after the slug
+const relImagePath = `./${path.basename(directory)}/${imageName}`;
+updatedPostData = updatedPostData.replace(regex, relImagePath);
         }
 
         images.push(imageName);
